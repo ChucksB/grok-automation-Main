@@ -77,11 +77,34 @@ function fileToBase64(file) {
   });
 }
 
+/**
+ * Parse text containing sequential "video prompt (N): ..." blocks.
+ * Each block runs from its marker to the next marker (or end of text).
+ * Falls back to one-prompt-per-line when no markers are found.
+ * @param {string} text
+ * @returns {string[]}
+ */
+function parseVideoPrompts(text) {
+  const markerRe = /video\s+prompt\s*\(\s*\d+\s*\)\s*:/gi;
+  const matches  = [...text.matchAll(markerRe)];
+
+  if (matches.length === 0) {
+    // Fallback: treat each non-empty line as a separate prompt
+    return text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  }
+
+  const prompts = [];
+  for (let i = 0; i < matches.length; i++) {
+    const start   = matches[i].index + matches[i][0].length;
+    const end     = i + 1 < matches.length ? matches[i + 1].index : text.length;
+    const content = text.slice(start, end).trim();
+    if (content) prompts.push(content);
+  }
+  return prompts;
+}
+
 function getPrompts() {
-  return promptsTextarea.value
-    .split('\n')
-    .map(l => l.trim())
-    .filter(l => l.length > 0);
+  return parseVideoPrompts(promptsTextarea.value);
 }
 
 function updatePromptCount() {
@@ -200,26 +223,24 @@ promptFileInput.addEventListener('change', async () => {
   if (!file) return;
 
   const text = await file.text();
-  let lines;
 
   if (file.name.endsWith('.json')) {
+    let lines;
     try {
       const data = JSON.parse(text);
-      if (Array.isArray(data)) {
-        lines = data.map(item => typeof item === 'string' ? item : JSON.stringify(item));
-      } else {
-        lines = [text];
-      }
+      lines = Array.isArray(data)
+        ? data.map(item => typeof item === 'string' ? item : JSON.stringify(item))
+        : [text];
     } catch {
       showBanner('Invalid JSON file.', 'error');
       return;
     }
+    promptsTextarea.value = lines.slice(0, 100).join('\n');
   } else {
-    lines = text.split('\n');
+    // Plain text: store as-is so parseVideoPrompts() can detect "video prompt (N):" blocks
+    promptsTextarea.value = text;
   }
 
-  const limited = lines.slice(0, 100).join('\n');
-  promptsTextarea.value = limited;
   updatePromptCount();
   promptFileInput.value = '';
   showBanner(`Loaded ${getPrompts().length} prompt(s) from file.`, 'success');
