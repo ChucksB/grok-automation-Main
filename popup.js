@@ -260,6 +260,7 @@ promptFileInput.addEventListener('change', async () => {
   }
 
   updatePromptCount();
+  saveUIState();
   promptFileInput.value = '';
   showBanner(`Loaded ${getPrompts().length} prompt(s) from file.`, 'success');
 });
@@ -499,18 +500,18 @@ chrome.runtime.onMessage.addListener((message) => {
     // Restore full UI state (images, prompts, settings, selectors)
     if (result.uiState) {
       const s = result.uiState;
+      // Restore all text fields FIRST so that when renderPreviews() calls
+      // saveUIState() internally it captures the correct values, not blanks.
+      if (s.prompts !== undefined)     promptsTextarea.value = s.prompts;
+      if (s.delay !== undefined)       delayInput.value      = s.delay;
+      if (s.timeout !== undefined)     timeoutInput.value    = s.timeout;
+      if (s.selFile !== undefined)     selFile.value         = s.selFile;
+      if (s.selPrompt !== undefined)   selPrompt.value       = s.selPrompt;
+      if (s.selGenerate !== undefined) selGenerate.value     = s.selGenerate;
       if (Array.isArray(s.images) && s.images.length) {
         selectedImages = s.images;
-        renderPreviews();  // also updates imageCount
+        renderPreviews();  // also updates imageCount; calls saveUIState() safely now
       }
-      if (s.prompts !== undefined) {
-        promptsTextarea.value = s.prompts;
-      }
-      if (s.delay !== undefined)       delayInput.value   = s.delay;
-      if (s.timeout !== undefined)     timeoutInput.value = s.timeout;
-      if (s.selFile !== undefined)     selFile.value      = s.selFile;
-      if (s.selPrompt !== undefined)   selPrompt.value    = s.selPrompt;
-      if (s.selGenerate !== undefined) selGenerate.value  = s.selGenerate;
     }
 
     updatePromptCount();
