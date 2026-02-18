@@ -3,10 +3,14 @@
    Injected into: grok.com/*
 
    Handles 'submit_pair' on grok.com/imagine/favorites:
-     1. Upload image to bottom bar file input
-     2. Type video prompt in "Type to imagine" textarea
-     3. Ensure Video mode is selected
-     4. Click the send button → Grok navigates to post page
+     1. Clear any lingering file attachments
+     2. Upload ONE image file
+     3. Wait 5 s for image to load
+     4. Ensure Video mode is selected
+     5. Type the video prompt
+     6. Wait 2 s
+     7. Click the send button
+     8. Send 'pair_done' → background navigates to favorites
    ========================================================= */
 
 'use strict';
@@ -15,6 +19,10 @@ if (window.__grokAutomatorLoaded) {
   console.log('[GrokAutomator] Already loaded, skipping re-init.');
 } else {
   window.__grokAutomatorLoaded = true;
+
+  let submitting = false; // Guard against duplicate calls
+
+  // ── Utilities ────────────────────────────────────────────
 
   function log(text, type = 'info') {
     console.log(`[GrokAutomator] [${type}] ${text}`);
@@ -28,10 +36,7 @@ if (window.__grokAutomatorLoaded) {
       const end = Date.now() + timeout;
       (function attempt() {
         for (const sel of selectors) {
-          try {
-            const el = document.querySelector(sel);
-            if (el) return resolve(el);
-          } catch (_) {}
+          try { const el = document.querySelector(sel); if (el) return resolve(el); } catch (_) {}
         }
         if (Date.now() < end) setTimeout(attempt, 300);
         else resolve(null);
@@ -39,13 +44,11 @@ if (window.__grokAutomatorLoaded) {
     });
   }
 
-  /** Find ANY clickable element (button, a, div, label, span) whose text includes `text`. */
+  /** Find ANY clickable element whose visible text contains `text` (case-insensitive). */
   function findClickableByText(text) {
     const lower = text.toLowerCase();
-    const tags = ['button', 'a', 'div[role="button"]', 'label', 'span[role="button"]'];
-    for (const tag of tags) {
-      const els = document.querySelectorAll(tag);
-      for (const el of els) {
+    for (const tag of ['button', 'a', '[role="button"]', 'label', '[role="menuitem"]']) {
+      for (const el of document.querySelectorAll(tag)) {
         if (el.textContent.trim().toLowerCase().includes(lower)) return el;
       }
     }
@@ -80,12 +83,13 @@ if (window.__grokAutomatorLoaded) {
     } else {
       setNativeValue(el, value);
       el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('change',  { bubbles: true }));
     }
     el.dispatchEvent(new KeyboardEvent('keyup', { key: 'End', bubbles: true }));
   }
 
-  function simulateFileUpload(input, file) {
+  /** Set exactly ONE file on a file input, replacing any existing selection. */
+  function setOneFile(input, file) {
     const dt = new DataTransfer();
     dt.items.add(file);
     input.files = dt.files;
@@ -93,111 +97,159 @@ if (window.__grokAutomatorLoaded) {
     input.dispatchEvent(new Event('input',  { bubbles: true }));
   }
 
-  // ── Submit Pair (favorites page) ───────────────────────────
+  // ── Clear lingering attachments ───────────────────────────
+  // Grok's React component tracks attachments in its own state.
+  // We must remove previous files via the UI before each upload
+  // to avoid the "max 3 files" error.
+
+  async function clearAttachments() {
+    // Click every remove/close button on existing attachment thumbnails
+    const removeSelectors = [
+      'button[aria-label*="remove" i]',
+      'button[aria-label*="delete" i]',
+      'button[aria-label*="clear" i]',
+      'button[aria-label*="dismiss" i]',
+      '[data-testid*="remove-attachment" i]',
+      '[data-testid*="delete-attachment" i]',
+    ];
+    let removed = 0;
+    for (const sel of removeSelectors) {
+      for (const btn of document.querySelectorAll(sel)) {
+        btn.click();
+        removed++;
+      }
+    }
+
+    // Also reset the native file input value so its FileList is empty
+    for (const input of document.querySelectorAll('input[type="file"]')) {
+      const empty = new DataTransfer();
+      input.files = empty.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    if (removed > 0) {
+      log(`Cleared ${removed} existing attachment(s)`);
+      await sleep(500);
+    }
+  }
+
+  // ── Submit Pair ───────────────────────────────────────────
 
   async function handleSubmitPair(imageData, prompt, index) {
+    if (submitting) {
+      log(`Item ${index + 1}: Already submitting – ignoring duplicate`, 'warning');
+      return;
+    }
+    submitting = true;
+
     const label = `Item ${index + 1}`;
-    log(`${label}: Starting submission`);
+    log(`${label}: Starting`);
 
-    // ── Step 1: Upload image ────────────────────────────────
-    const fileInput = await findElement([
-      'input[type="file"][accept*="image"]',
-      'input[type="file"]',
-    ], 5000);
+    try {
+      // ── 0. Clear any leftover attachments ────────────────
+      await clearAttachments();
 
-    if (!fileInput) {
-      log(`${label}: File input not found`, 'error');
-      return;
-    }
+      // ── 1. Upload exactly ONE image ──────────────────────
+      const fileInput = await findElement([
+        'input[type="file"][accept*="image"]',
+        'input[type="file"]',
+      ], 6000);
 
-    const file = dataUrlToFile(imageData.dataUrl, imageData.name, imageData.type);
-    log(`${label}: Uploading "${imageData.name}"`);
-    simulateFileUpload(fileInput, file);
-    await sleep(2000); // Wait for image thumbnail to appear in the bar
+      if (!fileInput) {
+        log(`${label}: File input not found`, 'error');
+        try { chrome.runtime.sendMessage({ action: 'item_error', index, text: 'File input not found' }); } catch (_) {}
+        return;
+      }
 
-    // ── Step 2: Ensure "Video" mode ─────────────────────────
-    const videoToggle = findClickableByText('video');
-    if (videoToggle) {
-      // Check if it's already active — look for aria-selected, data-active, or active class
-      const isActive = videoToggle.getAttribute('aria-selected') === 'true'
-        || videoToggle.getAttribute('data-state') === 'active'
-        || videoToggle.classList.contains('active')
-        || videoToggle.closest('[aria-selected="true"]');
-      if (!isActive) {
-        log(`${label}: Selecting Video mode`);
-        videoToggle.click();
-        await sleep(500);
+      const file = dataUrlToFile(imageData.dataUrl, imageData.name, imageData.type);
+      log(`${label}: Uploading "${imageData.name}"`);
+      setOneFile(fileInput, file);
+
+      // ── 2. Wait 5 s for image to load ───────────────────
+      log(`${label}: Waiting 5 s for image to load…`);
+      await sleep(5000);
+
+      // ── 3. Ensure Video mode ─────────────────────────────
+      const videoToggle = findClickableByText('video');
+      if (videoToggle) {
+        const alreadyActive = videoToggle.getAttribute('aria-selected') === 'true'
+          || videoToggle.getAttribute('data-state') === 'active'
+          || !!videoToggle.closest('[aria-selected="true"]');
+        if (!alreadyActive) {
+          log(`${label}: Selecting Video mode`);
+          videoToggle.click();
+          await sleep(400);
+        }
+      }
+
+      // ── 4. Type the prompt ───────────────────────────────
+      const textarea = await findElement([
+        'textarea[placeholder*="imagine" i]',
+        'textarea[placeholder*="type" i]',
+        'textarea',
+      ], 5000);
+
+      if (!textarea) {
+        log(`${label}: Textarea not found`, 'error');
+        try { chrome.runtime.sendMessage({ action: 'item_error', index, text: 'Textarea not found' }); } catch (_) {}
+        return;
+      }
+
+      log(`${label}: Typing prompt`);
+      simulateTyping(textarea, prompt);
+
+      // ── 5. Wait 2 s ──────────────────────────────────────
+      log(`${label}: Waiting 2 s before sending…`);
+      await sleep(2000);
+
+      // ── 6. Click send button ─────────────────────────────
+      let sendBtn = document.querySelector(
+        'button[type="submit"], button[aria-label*="send" i], button[aria-label*="submit" i]'
+      );
+      if (!sendBtn) sendBtn = findClickableByText('send') || findClickableByText('submit');
+      if (!sendBtn) {
+        // Find the last button in the same container as the textarea
+        const container = textarea.closest('form')
+          || textarea.closest('[role="form"]')
+          || textarea.parentElement?.parentElement?.parentElement;
+        if (container) {
+          const btns = Array.from(container.querySelectorAll('button'));
+          if (btns.length) sendBtn = btns[btns.length - 1];
+        }
+      }
+
+      if (sendBtn) {
+        log(`${label}: Clicking send`);
+        sendBtn.click();
       } else {
-        log(`${label}: Video mode already active`);
+        log(`${label}: No send button found – pressing Enter`);
+        textarea.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true,
+        }));
       }
-    } else {
-      log(`${label}: Video toggle not found — assuming Video mode is default`, 'warning');
+
+      await sleep(500);
+      log(`${label}: Done – telling background to navigate to favorites`);
+
+    } finally {
+      submitting = false;
     }
 
-    // ── Step 3: Type the prompt ─────────────────────────────
-    const textarea = await findElement([
-      'textarea[placeholder*="imagine" i]',
-      'textarea[placeholder*="type" i]',
-      'textarea',
-    ], 5000);
-
-    if (!textarea) {
-      log(`${label}: Textarea not found`, 'error');
-      return;
-    }
-
-    log(`${label}: Typing prompt`);
-    simulateTyping(textarea, prompt);
-    await sleep(500);
-
-    // ── Step 4: Click the send button ───────────────────────
-    let sendBtn = null;
-
-    // Try common selectors
-    sendBtn = document.querySelector(
-      'button[type="submit"], button[aria-label*="send" i], button[aria-label*="submit" i]'
-    );
-
-    // Try finding by text
-    if (!sendBtn) sendBtn = findClickableByText('send') || findClickableByText('submit');
-
-    // Fallback: find the last button inside the same container as the textarea
-    if (!sendBtn) {
-      const container = textarea.closest('form')
-        || textarea.closest('[role="form"]')
-        || textarea.parentElement?.parentElement?.parentElement;
-      if (container) {
-        const buttons = Array.from(container.querySelectorAll('button'));
-        if (buttons.length > 0) sendBtn = buttons[buttons.length - 1];
-      }
-    }
-
-    if (sendBtn) {
-      log(`${label}: Clicking send button`);
-      sendBtn.click();
-    } else {
-      // Last resort: press Enter in the textarea
-      log(`${label}: No send button found – pressing Enter`);
-      textarea.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true,
-      }));
-    }
-
-    await sleep(500);
-    log(`${label}: Submission complete – waiting for Grok to navigate`);
-    // Background's tabs.onUpdated will detect the post page and continue
+    // Tell background to navigate to favorites for the next pair
+    try { chrome.runtime.sendMessage({ action: 'pair_done', index }); } catch (_) {}
   }
 
   // ── Message Handler ───────────────────────────────────────
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || !message.action) return;
-
     if (message.action === 'submit_pair') {
       handleSubmitPair(message.image, message.prompt, message.index)
         .catch(err => {
           log(`Submit error: ${err.message}`, 'error');
+          submitting = false;
           try { chrome.runtime.sendMessage({ action: 'item_error', index: message.index, text: err.message }); } catch (_) {}
+          try { chrome.runtime.sendMessage({ action: 'pair_done',   index: message.index }); } catch (_) {}
         });
       sendResponse({ ok: true });
     } else {
