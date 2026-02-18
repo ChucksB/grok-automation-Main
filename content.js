@@ -348,17 +348,17 @@ if (window.__grokAutomatorLoaded) {
           sendResponse({ ok: false, reason: 'already_running' });
           return;
         }
+        if (!message.data) {
+          sendMessage({ action: 'error', text: 'No automation data received.' });
+          sendResponse({ ok: false });
+          return;
+        }
         cancelled = false;
         paused    = false;
-        chrome.storage.local.get('automationData', result => {
-          if (!result.automationData) {
-            sendMessage({ action: 'error', text: 'No automation data found in storage.' });
-            return;
-          }
-          runAutomation(result.automationData).catch(err => {
-            sendMessage({ action: 'error', text: err.message });
-            running = false;
-          });
+        // Data is passed directly in the message — no storage read needed.
+        runAutomation(message.data).catch(err => {
+          sendMessage({ action: 'error', text: err.message });
+          running = false;
         });
         sendResponse({ ok: true });
         break;

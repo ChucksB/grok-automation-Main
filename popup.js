@@ -39,9 +39,11 @@ const selGenerate  = document.getElementById('sel-generate');
 // ─── Persistence ──────────────────────────────────────────
 
 function saveUIState() {
+  // Images are NOT persisted here — base64 image data is too large for
+  // chrome.storage.local's 5 MB quota. Images must be re-uploaded if the
+  // popup is closed. All other settings are small and safe to persist.
   chrome.storage.local.set({
     uiState: {
-      images:      selectedImages,
       prompts:     promptsTextarea.value,
       delay:       delayInput.value,
       timeout:     timeoutInput.value,
@@ -335,7 +337,7 @@ clearBtn.addEventListener('click', () => {
   selPrompt.value = '';
   selGenerate.value = '';
   hideBanner();
-  chrome.storage.local.remove(['automationData', 'uiState']);
+  chrome.storage.local.remove(['uiState']);
 });
 
 // ─── Validation ────────────────────────────────────────────
@@ -397,13 +399,6 @@ document.getElementById('automation-form').addEventListener('submit', async e =>
     total:      count,
   };
 
-  try {
-    await chrome.storage.local.set({ automationData });
-  } catch (err) {
-    showBanner(`Storage error: ${err.message}`, 'error');
-    return;
-  }
-
   // Get the active tab
   let tabs;
   try {
@@ -434,13 +429,14 @@ document.getElementById('automation-form').addEventListener('submit', async e =>
   logList.innerHTML = '';
   addLog(`Starting automation: ${count} pair(s), ${delay/1000}s delay`, 'info');
 
-  // Inject content script and start
+  // Inject content script then send automation data directly in the start
+  // message — avoids chrome.storage.local entirely (no 5 MB quota issue).
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files: ['content.js'],
     });
-    await chrome.tabs.sendMessage(tab.id, { action: 'start' });
+    await chrome.tabs.sendMessage(tab.id, { action: 'start', data: automationData });
   } catch (err) {
     showBanner(`Failed to start: ${err.message}`, 'error');
     setRunningUI(false);
@@ -468,7 +464,6 @@ chrome.runtime.onMessage.addListener((message) => {
       addLog(`Automation complete! Processed ${message.total} item(s).`, 'success');
       showBanner(`Done! ${message.total} video generation(s) submitted.`, 'success');
       setRunningUI(false);
-      chrome.storage.local.remove('automationData');
       // Browser notification
       chrome.notifications.create({
         type: 'basic',
@@ -488,7 +483,6 @@ chrome.runtime.onMessage.addListener((message) => {
       addLog('Automation cancelled by user.', 'warning');
       showBanner('Automation cancelled.', 'warning');
       setRunningUI(false);
-      chrome.storage.local.remove('automationData');
       break;
 
     case 'item_error':
@@ -500,29 +494,18 @@ chrome.runtime.onMessage.addListener((message) => {
 // ─── Init ──────────────────────────────────────────────────
 
 (function init() {
-  chrome.storage.local.get(['uiState', 'automationData'], result => {
-    // Restore full UI state (images, prompts, settings, selectors)
+  chrome.storage.local.get(['uiState'], result => {
+    // Restore settings/prompts (images are not persisted — too large for storage quota)
     if (result.uiState) {
       const s = result.uiState;
-      // Restore all text fields FIRST so that when renderPreviews() calls
-      // saveUIState() internally it captures the correct values, not blanks.
       if (s.prompts !== undefined)     promptsTextarea.value = s.prompts;
       if (s.delay !== undefined)       delayInput.value      = s.delay;
       if (s.timeout !== undefined)     timeoutInput.value    = s.timeout;
       if (s.selFile !== undefined)     selFile.value         = s.selFile;
       if (s.selPrompt !== undefined)   selPrompt.value       = s.selPrompt;
       if (s.selGenerate !== undefined) selGenerate.value     = s.selGenerate;
-      if (Array.isArray(s.images) && s.images.length) {
-        selectedImages = s.images;
-        renderPreviews();  // also updates imageCount; calls saveUIState() safely now
-      }
     }
 
     updatePromptCount();
-
-    // Warn if there's a crashed/interrupted automation session
-    if (result.automationData) {
-      showBanner('Previous session data found. Click "Clear all" to reset.', 'info');
-    }
   });
 })();
