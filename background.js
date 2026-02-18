@@ -147,6 +147,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
   // Image uploaded → Grok opened the post page
   if (state.phase === 'await_post_page' && url.includes('grok.com/imagine/post/')) {
+    state.phase = 'filling_prompt'; // Lock immediately — prevents double-trigger
     log(`Post page detected for item ${state.currentIndex + 1}`);
     await sleep(800); // Let the page settle
     await doFillPrompt();

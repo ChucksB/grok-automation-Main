@@ -99,31 +99,48 @@ if (window.__grokAutomatorLoaded) {
 
   async function handleUploadImage(imageData, index) {
     const label = `Item ${index + 1}`;
-    log(`${label}: Looking for file input`);
+    log(`${label}: Looking for "Upload image" button`);
 
-    const fileSelectors = [
-      'input[type="file"][accept*="image"]',
-      'input[type="file"]',
-    ];
-    const triggerSelectors = [
-      'button[aria-label*="attach" i]',
-      'button[aria-label*="upload" i]',
-      'button[aria-label*="image" i]',
-      'label[for*="file" i]',
-      'label[for*="upload" i]',
-      '[data-testid*="attach" i]',
-    ];
+    // The favorites page has TWO file inputs:
+    //  1. The top-right "Upload image" button  → navigates to /imagine/post/<id>  ✓
+    //  2. The bottom bar attachment icon       → queues for text generation        ✗
+    // We must target the top-right one. Strategy: find the "Upload image" button
+    // by text, click it to reveal its file input, then set files on that input.
 
-    let fileInput = await findElement(fileSelectors, 2000);
+    // Step 1: locate and click the "Upload image" button
+    const uploadBtn = findButtonByText('upload image')
+      || document.querySelector(
+          'button[aria-label*="upload image" i], [data-testid*="upload-image" i]'
+        );
+
+    if (uploadBtn) {
+      log(`${label}: Clicking "Upload image" button`);
+      uploadBtn.click();
+      await sleep(600);
+    }
+
+    // Step 2: grab the file input that just became active.
+    // After clicking the button a file input is either already in the DOM
+    // or gets appended by Grok's JS. We pick ALL file inputs and prefer the
+    // one closest to the upload button (i.e. not inside the bottom prompt bar).
+    const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+    let fileInput = null;
+
+    if (allInputs.length === 1) {
+      fileInput = allInputs[0];
+    } else if (allInputs.length > 1) {
+      // Prefer whichever input is NOT inside the element that contains the
+      // "Type to imagine" / bottom prompt textarea
+      const bottomBar = document.querySelector('textarea[placeholder*="imagine" i]')
+        ?.closest('form, [role="form"], div[class*="input"], div[class*="prompt"], div[class*="composer"]');
+      fileInput = allInputs.find(inp => !bottomBar || !bottomBar.contains(inp))
+               ?? allInputs[0];
+      log(`${label}: Found ${allInputs.length} file inputs – picked the one outside the bottom bar`);
+    }
 
     if (!fileInput) {
-      const trigger = await findElement(triggerSelectors, 2000);
-      if (trigger) {
-        log(`${label}: Clicking upload trigger to reveal file input`);
-        trigger.click();
-        await sleep(800);
-        fileInput = await findElement(fileSelectors, 5000);
-      }
+      // Fallback: look for a hidden file input anywhere
+      fileInput = await findElement(['input[type="file"]'], 4000);
     }
 
     if (!fileInput) {
@@ -136,7 +153,7 @@ if (window.__grokAutomatorLoaded) {
     const file = dataUrlToFile(imageData.dataUrl, imageData.name, imageData.type);
     log(`${label}: Uploading "${imageData.name}"`);
     simulateFileUpload(fileInput, file);
-    // Grok will navigate to /imagine/post/<id> — background handles the next step
+    // Grok will navigate to /imagine/post/<id> — background drives the next step
   }
 
   // ── Handler: Fill Video Prompt (post page) ────────────────
