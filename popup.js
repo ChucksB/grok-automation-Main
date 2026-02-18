@@ -103,7 +103,8 @@ function fileToBase64(file) {
  * @returns {string[]}
  */
 function parseVideoPrompts(text) {
-  const markerRe = /video\s+prompt\s*\(\s*\d+\s*\)\s*:/gi;
+  // Capture the number inside the marker so we can sort by it
+  const markerRe = /video\s+prompt\s*\(\s*(\d+)\s*\)\s*:/gi;
   const matches  = [...text.matchAll(markerRe)];
 
   if (matches.length === 0) {
@@ -111,14 +112,19 @@ function parseVideoPrompts(text) {
     return text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   }
 
-  const prompts = [];
+  const pairs = [];
   for (let i = 0; i < matches.length; i++) {
+    const num     = parseInt(matches[i][1], 10);          // the (N) number
     const start   = matches[i].index + matches[i][0].length;
     const end     = i + 1 < matches.length ? matches[i + 1].index : text.length;
     const content = text.slice(start, end).trim();
-    if (content) prompts.push(content);
+    if (content) pairs.push({ num, content });
   }
-  return prompts;
+
+  // Sort by prompt number so prompt (1) → index 0, (2) → index 1, etc.
+  // regardless of the order they appear in the pasted text
+  pairs.sort((a, b) => a.num - b.num);
+  return pairs.map(p => p.content);
 }
 
 function getPrompts() {
@@ -163,6 +169,11 @@ async function processFiles(files) {
     const dataUrl = await fileToBase64(file);
     selectedImages.push({ name: file.name, type: file.type, dataUrl });
   }
+
+  // Always keep images sorted by filename so 01 → prompt 1, 02 → prompt 2, etc.
+  selectedImages.sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  );
 
   renderPreviews();
   hideBanner();
@@ -386,8 +397,14 @@ document.getElementById('automation-form').addEventListener('submit', async e =>
     generateButton: selGenerate.value.trim() || null,
   };
 
+  // Re-sort images by filename right before sending, in case files were added
+  // in multiple batches or removed/re-added out of order.
+  const sortedImages = [...selectedImages].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  );
+
   const automationData = {
-    images:     selectedImages.slice(0, count),
+    images:     sortedImages.slice(0, count),
     prompts:    prompts.slice(0, count),
     delay,
     timeout,
