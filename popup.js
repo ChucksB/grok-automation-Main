@@ -421,7 +421,7 @@ document.getElementById('automation-form').addEventListener('submit', async e =>
     || url.includes('x.com/grok')
     || url.includes('x.com/i/grok');
   if (!isGrokPage) {
-    showBanner('Please navigate to Grok (grok.com/imagine, grok.x.ai, or x.com/grok) first.', 'warning');
+    showBanner('Please navigate to Grok Imagine (grok.com/imagine/favorites) first.', 'warning');
     return;
   }
 
