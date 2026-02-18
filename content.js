@@ -160,14 +160,24 @@ if (window.__grokAutomatorLoaded) {
     el.focus();
 
     if (el.isContentEditable) {
-      el.innerHTML = '';
-      el.textContent = value;
+      // Select all existing content then insert new text via execCommand.
+      // This fires the native browser input events that React/Vue listen to.
+      document.execCommand('selectAll', false, null);
+      const inserted = document.execCommand('insertText', false, value);
+      if (!inserted) {
+        // execCommand not supported (rare) – fall back to direct assignment
+        el.textContent = value;
+        el.dispatchEvent(new InputEvent('input', {
+          bubbles: true, cancelable: true,
+          inputType: 'insertText', data: value,
+        }));
+      }
     } else {
       setNativeValue(el, value);
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    el.dispatchEvent(new InputEvent('input',  { bubbles: true, data: value }));
-    el.dispatchEvent(new Event('change',       { bubbles: true }));
     el.dispatchEvent(new KeyboardEvent('keyup', { key: 'End', bubbles: true }));
   }
 
@@ -210,15 +220,20 @@ if (window.__grokAutomatorLoaded) {
 
     // ── 1. Upload image ────────────────────────────────────
 
-    // Some UIs hide the file input behind an upload-trigger button
-    const uploadTrigger = await findElement(sels.uploadTrigger, 2000);
-    if (uploadTrigger) {
-      log(`${label}: Clicking upload trigger button`);
-      uploadTrigger.click();
-      await sleep(800);
+    // Try to find the file input directly first (no trigger click needed)
+    let fileInputEl = await findElement(sels.fileInput, 1500);
+
+    // Only click an upload-trigger if the file input isn't directly accessible
+    if (!fileInputEl) {
+      const uploadTrigger = await findElement(sels.uploadTrigger, 2000);
+      if (uploadTrigger) {
+        log(`${label}: Clicking upload trigger to reveal file input`);
+        uploadTrigger.click();
+        await sleep(800);
+        fileInputEl = await findElement(sels.fileInput, 5000);
+      }
     }
 
-    const fileInputEl = await findElement(sels.fileInput, 5000);
     if (!fileInputEl) {
       throw new Error(`${label}: File input not found. Try setting a custom selector.`);
     }
