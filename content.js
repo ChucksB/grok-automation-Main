@@ -1,10 +1,12 @@
 /* =========================================================
    Grok Video Automator – Content Script
-   Injected into: grok.com/*, grok.x.ai/*, x.com/grok*
+   Injected into: grok.com/*
 
-   Page-specific responsibilities:
-   - grok.com/imagine/favorites  → handle 'upload_image'
-   - grok.com/imagine/post/<id>  → handle 'fill_video_prompt'
+   Handles 'submit_pair' on grok.com/imagine/favorites:
+     1. Upload image to bottom bar file input
+     2. Type video prompt in "Type to imagine" textarea
+     3. Ensure Video mode is selected
+     4. Click the send button → Grok navigates to post page
    ========================================================= */
 
 'use strict';
@@ -14,18 +16,13 @@ if (window.__grokAutomatorLoaded) {
 } else {
   window.__grokAutomatorLoaded = true;
 
-  // ── Utilities ────────────────────────────────────────────
-
   function log(text, type = 'info') {
     console.log(`[GrokAutomator] [${type}] ${text}`);
     try { chrome.runtime.sendMessage({ action: 'log', text, type }); } catch (_) {}
   }
 
-  function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-  /** Poll for first matching element across a list of CSS selectors. */
   function findElement(selectors, timeout = 8000) {
     return new Promise(resolve => {
       const end = Date.now() + timeout;
@@ -42,11 +39,17 @@ if (window.__grokAutomatorLoaded) {
     });
   }
 
-  /** Find a <button> whose visible text contains `text` (case-insensitive). */
-  function findButtonByText(text) {
+  /** Find ANY clickable element (button, a, div, label, span) whose text includes `text`. */
+  function findClickableByText(text) {
     const lower = text.toLowerCase();
-    return Array.from(document.querySelectorAll('button'))
-      .find(b => b.textContent.trim().toLowerCase().includes(lower)) || null;
+    const tags = ['button', 'a', 'div[role="button"]', 'label', 'span[role="button"]'];
+    for (const tag of tags) {
+      const els = document.querySelectorAll(tag);
+      for (const el of els) {
+        if (el.textContent.trim().toLowerCase().includes(lower)) return el;
+      }
+    }
+    return null;
   }
 
   function dataUrlToFile(dataUrl, filename, mimeType) {
@@ -61,21 +64,18 @@ if (window.__grokAutomatorLoaded) {
     const proto = el.tagName === 'TEXTAREA'
       ? window.HTMLTextAreaElement.prototype
       : window.HTMLInputElement.prototype;
-    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-    if (descriptor && descriptor.set) descriptor.set.call(el, value);
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (desc && desc.set) desc.set.call(el, value);
     else el.value = value;
   }
 
-  /** Type text into an input/textarea in a way React/Vue synthetic events detect. */
   function simulateTyping(el, value) {
     el.focus();
     if (el.isContentEditable) {
       document.execCommand('selectAll', false, null);
       if (!document.execCommand('insertText', false, value)) {
         el.textContent = value;
-        el.dispatchEvent(new InputEvent('input', {
-          bubbles: true, cancelable: true, inputType: 'insertText', data: value,
-        }));
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
       }
     } else {
       setNativeValue(el, value);
@@ -93,129 +93,99 @@ if (window.__grokAutomatorLoaded) {
     input.dispatchEvent(new Event('input',  { bubbles: true }));
   }
 
-  // ── Handler: Upload Image (favorites page) ────────────────
-  // Attaches the file to Grok's hidden file input.
-  // Grok then navigates automatically to /imagine/post/<id>.
+  // ── Submit Pair (favorites page) ───────────────────────────
 
-  async function handleUploadImage(imageData, index) {
+  async function handleSubmitPair(imageData, prompt, index) {
     const label = `Item ${index + 1}`;
-    log(`${label}: Looking for "Upload image" button`);
+    log(`${label}: Starting submission`);
 
-    // The favorites page has TWO file inputs:
-    //  1. The top-right "Upload image" button  → navigates to /imagine/post/<id>  ✓
-    //  2. The bottom bar attachment icon       → queues for text generation        ✗
-    // We must target the top-right one. Strategy: find the "Upload image" button
-    // by text, click it to reveal its file input, then set files on that input.
-
-    // Step 1: locate and click the "Upload image" button
-    const uploadBtn = findButtonByText('upload image')
-      || document.querySelector(
-          'button[aria-label*="upload image" i], [data-testid*="upload-image" i]'
-        );
-
-    if (uploadBtn) {
-      log(`${label}: Clicking "Upload image" button`);
-      uploadBtn.click();
-      await sleep(600);
-    }
-
-    // Step 2: grab the file input that just became active.
-    // After clicking the button a file input is either already in the DOM
-    // or gets appended by Grok's JS. We pick ALL file inputs and prefer the
-    // one closest to the upload button (i.e. not inside the bottom prompt bar).
-    const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-    let fileInput = null;
-
-    if (allInputs.length === 1) {
-      fileInput = allInputs[0];
-    } else if (allInputs.length > 1) {
-      // Prefer whichever input is NOT inside the element that contains the
-      // "Type to imagine" / bottom prompt textarea
-      const bottomBar = document.querySelector('textarea[placeholder*="imagine" i]')
-        ?.closest('form, [role="form"], div[class*="input"], div[class*="prompt"], div[class*="composer"]');
-      fileInput = allInputs.find(inp => !bottomBar || !bottomBar.contains(inp))
-               ?? allInputs[0];
-      log(`${label}: Found ${allInputs.length} file inputs – picked the one outside the bottom bar`);
-    }
+    // ── Step 1: Upload image ────────────────────────────────
+    const fileInput = await findElement([
+      'input[type="file"][accept*="image"]',
+      'input[type="file"]',
+    ], 5000);
 
     if (!fileInput) {
-      // Fallback: look for a hidden file input anywhere
-      fileInput = await findElement(['input[type="file"]'], 4000);
-    }
-
-    if (!fileInput) {
-      const msg = `${label}: File input not found`;
-      log(msg, 'error');
-      try { chrome.runtime.sendMessage({ action: 'item_error', index, text: msg }); } catch (_) {}
+      log(`${label}: File input not found`, 'error');
       return;
     }
 
     const file = dataUrlToFile(imageData.dataUrl, imageData.name, imageData.type);
     log(`${label}: Uploading "${imageData.name}"`);
     simulateFileUpload(fileInput, file);
-    // Grok will navigate to /imagine/post/<id> — background drives the next step
-  }
+    await sleep(2000); // Wait for image thumbnail to appear in the bar
 
-  // ── Handler: Fill Video Prompt (post page) ────────────────
-  // Finds the "Type to customize video…" textarea, types the prompt,
-  // clicks "Make video", then tells the background to move on.
+    // ── Step 2: Ensure "Video" mode ─────────────────────────
+    const videoToggle = findClickableByText('video');
+    if (videoToggle) {
+      // Check if it's already active — look for aria-selected, data-active, or active class
+      const isActive = videoToggle.getAttribute('aria-selected') === 'true'
+        || videoToggle.getAttribute('data-state') === 'active'
+        || videoToggle.classList.contains('active')
+        || videoToggle.closest('[aria-selected="true"]');
+      if (!isActive) {
+        log(`${label}: Selecting Video mode`);
+        videoToggle.click();
+        await sleep(500);
+      } else {
+        log(`${label}: Video mode already active`);
+      }
+    } else {
+      log(`${label}: Video toggle not found — assuming Video mode is default`, 'warning');
+    }
 
-  async function handleFillVideoPrompt(prompt, index) {
-    const label = `Item ${index + 1}`;
-    log(`${label}: Filling video prompt`);
-
-    // Find the video prompt textarea
-    const promptSelectors = [
-      'textarea[placeholder*="customize" i]',
-      'textarea[placeholder*="video" i]',
-      'textarea[placeholder*="prompt" i]',
+    // ── Step 3: Type the prompt ─────────────────────────────
+    const textarea = await findElement([
+      'textarea[placeholder*="imagine" i]',
+      'textarea[placeholder*="type" i]',
       'textarea',
-    ];
-    const promptEl = await findElement(promptSelectors, 10000);
+    ], 5000);
 
-    if (!promptEl) {
-      const msg = `${label}: Video prompt textarea not found`;
-      log(msg, 'error');
-      try { chrome.runtime.sendMessage({ action: 'item_error', index, text: msg }); } catch (_) {}
-      // Tell background to move on so we don't get stuck
-      try { chrome.runtime.sendMessage({ action: 'video_submitted', index }); } catch (_) {}
+    if (!textarea) {
+      log(`${label}: Textarea not found`, 'error');
       return;
     }
 
-    log(`${label}: Typing video prompt`);
-    simulateTyping(promptEl, prompt);
-    await sleep(600);
+    log(`${label}: Typing prompt`);
+    simulateTyping(textarea, prompt);
+    await sleep(500);
 
-    // Find the "Make video" button
-    let makeVideoBtn = findButtonByText('make video');
-    if (!makeVideoBtn) {
-      makeVideoBtn = document.querySelector(
-        'button[aria-label*="make video" i], button[aria-label*="generate video" i]'
-      );
+    // ── Step 4: Click the send button ───────────────────────
+    let sendBtn = null;
+
+    // Try common selectors
+    sendBtn = document.querySelector(
+      'button[type="submit"], button[aria-label*="send" i], button[aria-label*="submit" i]'
+    );
+
+    // Try finding by text
+    if (!sendBtn) sendBtn = findClickableByText('send') || findClickableByText('submit');
+
+    // Fallback: find the last button inside the same container as the textarea
+    if (!sendBtn) {
+      const container = textarea.closest('form')
+        || textarea.closest('[role="form"]')
+        || textarea.parentElement?.parentElement?.parentElement;
+      if (container) {
+        const buttons = Array.from(container.querySelectorAll('button'));
+        if (buttons.length > 0) sendBtn = buttons[buttons.length - 1];
+      }
     }
 
-    if (!makeVideoBtn) {
-      const msg = `${label}: "Make video" button not found`;
-      log(msg, 'error');
-      try { chrome.runtime.sendMessage({ action: 'item_error', index, text: msg }); } catch (_) {}
-      try { chrome.runtime.sendMessage({ action: 'video_submitted', index }); } catch (_) {}
-      return;
+    if (sendBtn) {
+      log(`${label}: Clicking send button`);
+      sendBtn.click();
+    } else {
+      // Last resort: press Enter in the textarea
+      log(`${label}: No send button found – pressing Enter`);
+      textarea.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true,
+      }));
     }
 
-    if (makeVideoBtn.disabled || makeVideoBtn.getAttribute('aria-disabled') === 'true') {
-      const msg = `${label}: "Make video" button is disabled – prompt may not have registered`;
-      log(msg, 'error');
-      try { chrome.runtime.sendMessage({ action: 'item_error', index, text: msg }); } catch (_) {}
-      try { chrome.runtime.sendMessage({ action: 'video_submitted', index }); } catch (_) {}
-      return;
-    }
-
-    log(`${label}: Clicking "Make video"`);
-    makeVideoBtn.click();
-    await sleep(400);
-
-    // Notify background → it will navigate back to favorites
-    try { chrome.runtime.sendMessage({ action: 'video_submitted', index }); } catch (_) {}
+    await sleep(500);
+    log(`${label}: Submission complete – waiting for Grok to navigate`);
+    // Background's tabs.onUpdated will detect the post page and continue
   }
 
   // ── Message Handler ───────────────────────────────────────
@@ -223,29 +193,15 @@ if (window.__grokAutomatorLoaded) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || !message.action) return;
 
-    switch (message.action) {
-
-      case 'upload_image':
-        handleUploadImage(message.image, message.index)
-          .catch(err => {
-            log(`Upload error: ${err.message}`, 'error');
-            try { chrome.runtime.sendMessage({ action: 'item_error', index: message.index, text: err.message }); } catch (_) {}
-          });
-        sendResponse({ ok: true });
-        break;
-
-      case 'fill_video_prompt':
-        handleFillVideoPrompt(message.prompt, message.index)
-          .catch(err => {
-            log(`Fill-prompt error: ${err.message}`, 'error');
-            try { chrome.runtime.sendMessage({ action: 'item_error', index: message.index, text: err.message }); } catch (_) {}
-            try { chrome.runtime.sendMessage({ action: 'video_submitted', index: message.index }); } catch (_) {}
-          });
-        sendResponse({ ok: true });
-        break;
-
-      default:
-        sendResponse({ ok: false });
+    if (message.action === 'submit_pair') {
+      handleSubmitPair(message.image, message.prompt, message.index)
+        .catch(err => {
+          log(`Submit error: ${err.message}`, 'error');
+          try { chrome.runtime.sendMessage({ action: 'item_error', index: message.index, text: err.message }); } catch (_) {}
+        });
+      sendResponse({ ok: true });
+    } else {
+      sendResponse({ ok: false });
     }
   });
 
