@@ -36,6 +36,22 @@ const selFile      = document.getElementById('sel-file');
 const selPrompt    = document.getElementById('sel-prompt');
 const selGenerate  = document.getElementById('sel-generate');
 
+// ─── Persistence ──────────────────────────────────────────
+
+function saveUIState() {
+  chrome.storage.local.set({
+    uiState: {
+      images:      selectedImages,
+      prompts:     promptsTextarea.value,
+      delay:       delayInput.value,
+      timeout:     timeoutInput.value,
+      selFile:     selFile.value,
+      selPrompt:   selPrompt.value,
+      selGenerate: selGenerate.value,
+    }
+  });
+}
+
 // ─── Helpers ──────────────────────────────────────────────
 
 function showBanner(message, type = 'info') {
@@ -181,6 +197,8 @@ function renderPreviews() {
     li.append(thumb, name, removeBtn);
     imagePreview.appendChild(li);
   });
+
+  saveUIState();
 }
 
 // ─── Drop Zone ─────────────────────────────────────────────
@@ -214,7 +232,7 @@ imageInput.addEventListener('change', async () => {
 
 // ─── Prompt Handling ───────────────────────────────────────
 
-promptsTextarea.addEventListener('input', updatePromptCount);
+promptsTextarea.addEventListener('input', () => { updatePromptCount(); saveUIState(); });
 
 loadPromptsBtn.addEventListener('click', () => promptFileInput.click());
 
@@ -248,10 +266,15 @@ promptFileInput.addEventListener('change', async () => {
 
 // ─── Number Inputs ─────────────────────────────────────────
 
-document.getElementById('delay-dec').addEventListener('click',   () => clampNumberInput(delayInput, -1));
-document.getElementById('delay-inc').addEventListener('click',   () => clampNumberInput(delayInput, +1));
-document.getElementById('timeout-dec').addEventListener('click', () => clampNumberInput(timeoutInput, -10));
-document.getElementById('timeout-inc').addEventListener('click', () => clampNumberInput(timeoutInput, +10));
+document.getElementById('delay-dec').addEventListener('click',   () => { clampNumberInput(delayInput,   -1);  saveUIState(); });
+document.getElementById('delay-inc').addEventListener('click',   () => { clampNumberInput(delayInput,   +1);  saveUIState(); });
+document.getElementById('timeout-dec').addEventListener('click', () => { clampNumberInput(timeoutInput, -10); saveUIState(); });
+document.getElementById('timeout-inc').addEventListener('click', () => { clampNumberInput(timeoutInput, +10); saveUIState(); });
+delayInput.addEventListener('change',   saveUIState);
+timeoutInput.addEventListener('change', saveUIState);
+selFile.addEventListener('input',       saveUIState);
+selPrompt.addEventListener('input',     saveUIState);
+selGenerate.addEventListener('input',   saveUIState);
 
 // ─── UI State ──────────────────────────────────────────────
 
@@ -311,7 +334,7 @@ clearBtn.addEventListener('click', () => {
   selPrompt.value = '';
   selGenerate.value = '';
   hideBanner();
-  chrome.storage.local.remove('automationData');
+  chrome.storage.local.remove(['automationData', 'uiState']);
 });
 
 // ─── Validation ────────────────────────────────────────────
@@ -472,13 +495,28 @@ chrome.runtime.onMessage.addListener((message) => {
 // ─── Init ──────────────────────────────────────────────────
 
 (function init() {
-  updatePromptCount();
+  chrome.storage.local.get(['uiState', 'automationData'], result => {
+    // Restore full UI state (images, prompts, settings, selectors)
+    if (result.uiState) {
+      const s = result.uiState;
+      if (Array.isArray(s.images) && s.images.length) {
+        selectedImages = s.images;
+        renderPreviews();  // also updates imageCount
+      }
+      if (s.prompts !== undefined) {
+        promptsTextarea.value = s.prompts;
+      }
+      if (s.delay !== undefined)       delayInput.value   = s.delay;
+      if (s.timeout !== undefined)     timeoutInput.value = s.timeout;
+      if (s.selFile !== undefined)     selFile.value      = s.selFile;
+      if (s.selPrompt !== undefined)   selPrompt.value    = s.selPrompt;
+      if (s.selGenerate !== undefined) selGenerate.value  = s.selGenerate;
+    }
 
-  // Restore any saved data on popup open
-  chrome.storage.local.get('automationData', result => {
+    updatePromptCount();
+
+    // Warn if there's a crashed/interrupted automation session
     if (result.automationData) {
-      const d = result.automationData;
-      // If there's leftover data from a crashed session, offer to clear it
       showBanner('Previous session data found. Click "Clear all" to reset.', 'info');
     }
   });
