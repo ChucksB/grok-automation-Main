@@ -421,11 +421,12 @@ document.getElementById('automation-form').addEventListener('submit', async e =>
 
   // Check the URL
   const url = tab.url || '';
-  const isGrokPage = url.includes('grok.x.ai')
+  const isGrokPage = url.includes('grok.com')
+    || url.includes('grok.x.ai')
     || url.includes('x.com/grok')
     || url.includes('x.com/i/grok');
   if (!isGrokPage) {
-    showBanner('Please navigate to the Grok interface (grok.x.ai or x.com/grok) first.', 'warning');
+    showBanner('Please navigate to Grok (grok.com/imagine, grok.x.ai, or x.com/grok) first.', 'warning');
     return;
   }
 

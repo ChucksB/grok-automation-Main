@@ -11,6 +11,7 @@
     "alarms"
   ],
   "host_permissions": [
+    "https://grok.com/*",
     "https://grok.x.ai/*",
     "https://x.com/*"
   ],
@@ -28,6 +29,7 @@
   "content_scripts": [
     {
       "matches": [
+        "https://grok.com/*",
         "https://grok.x.ai/*",
         "https://x.com/grok*",
         "https://x.com/i/grok*"
