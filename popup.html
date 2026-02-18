@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grok Video Automator</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <img src="icons/icon48.png" alt="Grok Video Automator" class="logo" />
+      <div class="header-text">
+        <h1>Grok Video Automator</h1>
+        <span class="version">v1.0.0</span>
+      </div>
+    </header>
+
+    <!-- Status Banner -->
+    <div id="status-banner" class="status-banner hidden" role="alert" aria-live="polite">
+      <span id="status-text"></span>
+    </div>
+
+    <!-- Main Form -->
+    <form id="automation-form" novalidate>
+
+      <!-- Image Upload Section -->
+      <section class="section" aria-labelledby="img-section-label">
+        <label id="img-section-label" class="section-label" for="image-input">
+          Images
+          <span class="badge" id="image-count">0</span>
+        </label>
+        <div
+          class="drop-zone"
+          id="drop-zone"
+          role="region"
+          aria-label="Image drop zone"
+          tabindex="0"
+        >
+          <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round"
+              d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25
+              2.25 0 013.182 0l2.909 2.909M13.5 12h.008v.008H13.5V12zm0 0H6.75
+              M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0
+              0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z"/>
+          </svg>
+          <p class="drop-text">Drop images here or <span class="link">browse</span></p>
+          <p class="drop-hint">JPEG · PNG · GIF &nbsp;|&nbsp; Max 100 images</p>
+          <input
+            type="file"
+            id="image-input"
+            accept="image/jpeg,image/png,image/gif"
+            multiple
+            aria-label="Select images"
+          />
+        </div>
+
+        <!-- Image Preview List -->
+        <ul class="preview-list" id="image-preview" aria-label="Selected images"></ul>
+      </section>
+
+      <!-- Prompts Section -->
+      <section class="section" aria-labelledby="prompt-section-label">
+        <div class="section-header-row">
+          <label id="prompt-section-label" class="section-label" for="prompts-textarea">
+            Prompts
+            <span class="badge" id="prompt-count">0</span>
+          </label>
+          <div class="prompt-actions">
+            <button type="button" id="load-prompts-btn" class="btn-ghost" title="Load prompts from file">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021
+                  18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
+              </svg>
+              Load file
+            </button>
+            <input type="file" id="prompt-file-input" accept=".txt,.json" aria-label="Load prompts from file" />
+          </div>
+        </div>
+        <textarea
+          id="prompts-textarea"
+          class="prompts-area"
+          rows="8"
+          placeholder="Enter one prompt per line (text or JSON)&#10;&#10;Example:&#10;A cinematic sunset over mountains&#10;{&quot;motion&quot;: &quot;pan&quot;, &quot;scene&quot;: &quot;ocean waves&quot;}"
+          aria-label="Enter prompts, one per line"
+          spellcheck="false"
+        ></textarea>
+      </section>
+
+      <!-- Configuration Section -->
+      <section class="section" aria-labelledby="config-section-label">
+        <span id="config-section-label" class="section-label">Configuration</span>
+        <div class="config-grid">
+          <div class="config-item">
+            <label class="config-label" for="delay-input">
+              Delay between generations
+              <span class="config-hint">(seconds)</span>
+            </label>
+            <div class="number-input-wrap">
+              <button type="button" class="num-btn" id="delay-dec" aria-label="Decrease delay">−</button>
+              <input
+                type="number"
+                id="delay-input"
+                min="1"
+                max="30"
+                value="5"
+                aria-label="Delay in seconds between each generation"
+              />
+              <button type="button" class="num-btn" id="delay-inc" aria-label="Increase delay">+</button>
+            </div>
+          </div>
+          <div class="config-item">
+            <label class="config-label" for="wait-timeout-input">
+              Generation wait timeout
+              <span class="config-hint">(seconds)</span>
+            </label>
+            <div class="number-input-wrap">
+              <button type="button" class="num-btn" id="timeout-dec" aria-label="Decrease timeout">−</button>
+              <input
+                type="number"
+                id="wait-timeout-input"
+                min="10"
+                max="300"
+                value="60"
+                aria-label="Maximum seconds to wait for each generation to complete"
+              />
+              <button type="button" class="num-btn" id="timeout-inc" aria-label="Increase timeout">+</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Selectors (advanced / collapsible) -->
+        <details class="advanced-section">
+          <summary class="advanced-toggle">Advanced: DOM Selectors</summary>
+          <div class="advanced-content">
+            <p class="advanced-hint">
+              Customize selectors if Grok's UI changes. Leave blank to use defaults.
+            </p>
+            <div class="selector-grid">
+              <div class="selector-item">
+                <label class="selector-label" for="sel-file">File input selector</label>
+                <input type="text" id="sel-file" class="selector-input" placeholder="input[type='file']" />
+              </div>
+              <div class="selector-item">
+                <label class="selector-label" for="sel-prompt">Prompt field selector</label>
+                <input type="text" id="sel-prompt" class="selector-input" placeholder="textarea, [contenteditable]" />
+              </div>
+              <div class="selector-item">
+                <label class="selector-label" for="sel-generate">Generate button selector</label>
+                <input type="text" id="sel-generate" class="selector-input" placeholder="button[type='submit']" />
+              </div>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <!-- Progress Section -->
+      <section class="section progress-section" id="progress-section" aria-labelledby="progress-label" hidden>
+        <span id="progress-label" class="section-label">Progress</span>
+        <div class="progress-bar-wrap" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Automation progress">
+          <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
+        </div>
+        <p id="progress-text" class="progress-text">Initializing…</p>
+        <div class="log-wrap" id="log-wrap">
+          <ul class="log-list" id="log-list" aria-label="Automation log" aria-live="polite"></ul>
+        </div>
+      </section>
+
+      <!-- Action Buttons -->
+      <div class="actions">
+        <button type="submit" id="start-btn" class="btn btn-primary" aria-label="Run automation">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+          Run Automation
+        </button>
+        <button type="button" id="pause-btn" class="btn btn-secondary" hidden aria-label="Pause automation">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+          </svg>
+          Pause
+        </button>
+        <button type="button" id="cancel-btn" class="btn btn-danger" hidden aria-label="Cancel automation">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59
+              6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+          </svg>
+          Cancel
+        </button>
+        <button type="button" id="clear-btn" class="btn btn-ghost-sm" aria-label="Clear all data">
+          Clear all
+        </button>
+      </div>
+    </form>
+
+    <footer class="footer">
+      For personal use only &mdash; respect Grok&rsquo;s Terms of Service.
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
