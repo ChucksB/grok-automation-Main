@@ -308,9 +308,7 @@ function resetUI() {
 
 pauseBtn.addEventListener('click', () => {
   isPaused = !isPaused;
-  chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-    chrome.tabs.sendMessage(tabs[0].id, { action: isPaused ? 'pause' : 'resume' });
-  });
+  chrome.runtime.sendMessage({ action: isPaused ? 'pause' : 'resume' });
   pauseBtn.innerHTML = isPaused
     ? `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Resume`
     : `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg> Pause`;
@@ -318,9 +316,7 @@ pauseBtn.addEventListener('click', () => {
 });
 
 cancelBtn.addEventListener('click', () => {
-  chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-    chrome.tabs.sendMessage(tabs[0].id, { action: 'cancel' });
-  });
+  chrome.runtime.sendMessage({ action: 'cancel' });
   showBanner('Cancelling…', 'warning');
 });
 
@@ -429,14 +425,10 @@ document.getElementById('automation-form').addEventListener('submit', async e =>
   logList.innerHTML = '';
   addLog(`Starting automation: ${count} pair(s), ${delay/1000}s delay`, 'info');
 
-  // Inject content script then send automation data directly in the start
-  // message — avoids chrome.storage.local entirely (no 5 MB quota issue).
+  // Send start to the background service worker.
+  // Background orchestrates all page navigations and content-script calls.
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['content.js'],
-    });
-    await chrome.tabs.sendMessage(tab.id, { action: 'start', data: automationData });
+    await chrome.runtime.sendMessage({ action: 'start', tabId: tab.id, data: automationData });
   } catch (err) {
     showBanner(`Failed to start: ${err.message}`, 'error');
     setRunningUI(false);

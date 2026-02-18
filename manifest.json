@@ -5,6 +5,7 @@
   "description": "Automates batch video generation in Grok AI by sequentially pairing images with prompts.",
   "permissions": [
     "activeTab",
+    "tabs",
     "storage",
     "scripting",
     "notifications",
