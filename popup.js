@@ -96,15 +96,19 @@ function fileToBase64(file) {
 }
 
 /**
- * Parse text containing sequential "video prompt (N): ..." blocks.
+ * Parse text containing sequential "video prompt N: ..." blocks.
+ * Supports both formats:
+ *   video prompt 1: { ... }       ← JSON / plain text without parentheses
+ *   video prompt (1): { ... }     ← parenthesised format
  * Each block runs from its marker to the next marker (or end of text).
+ * The full content (including multi-line JSON) is preserved as-is.
  * Falls back to one-prompt-per-line when no markers are found.
  * @param {string} text
  * @returns {string[]}
  */
 function parseVideoPrompts(text) {
-  // Capture the number inside the marker so we can sort by it
-  const markerRe = /video\s+prompt\s*\(\s*(\d+)\s*\)\s*:/gi;
+  // Matches "video prompt 1:" OR "video prompt (1):" — parentheses optional
+  const markerRe = /video\s+prompt\s*\(?\s*(\d+)\s*\)?\s*:/gi;
   const matches  = [...text.matchAll(markerRe)];
 
   if (matches.length === 0) {
@@ -114,10 +118,10 @@ function parseVideoPrompts(text) {
 
   const pairs = [];
   for (let i = 0; i < matches.length; i++) {
-    const num     = parseInt(matches[i][1], 10);          // the (N) number
+    const num     = parseInt(matches[i][1], 10);
     const start   = matches[i].index + matches[i][0].length;
     const end     = i + 1 < matches.length ? matches[i + 1].index : text.length;
-    const content = text.slice(start, end).trim();
+    const content = text.slice(start, end).trim(); // preserves JSON newlines
     if (content) pairs.push({ num, content });
   }
 
